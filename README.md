@@ -1,62 +1,104 @@
-# Advanced Manufacturing Control Panel
+# Advanced Manufacturing Web App
 
-A lightweight web application for monitoring and controlling manufacturing equipment over your local network. This application provides a simple interface for tracking machine status, controlling equipment, and managing maintenance schedules.
+A comprehensive web application built with Streamlit for manufacturing control, data management, and line scaling operations.
 
 ## Features
 
-- Real-time equipment status monitoring
-- Remote control of manufacturing machines
-- Maintenance scheduling and tracking
-- Production uptime monitoring
-- No external services or installations required
-- Accessible from any device on the same network
+### 1. Equipment Dashboard
+- Real-time monitoring of manufacturing equipment status
+- Interactive control panel for each machine
+- System metrics display including:
+  - Total uptime
+  - Active machines count
+  - System efficiency
 
-## Requirements
-- Python 3.x (which you already have installed)
+### 2. File Management
+- Browse and navigate directories
+- Batch file selection and renaming
+- File filtering and sorting capabilities
+- Detailed file information display (size, modification date)
+- Support for adding prefixes and text replacement
 
-## How to Run
+### 3. Excel Row Exporter
+- Upload and process Excel files
+- Select specific sheets and row ranges
+- Export selected rows to individual CSV files
+- Customizable output directory
 
-1. Open a terminal/command prompt
-2. Navigate to the project directory
-3. Run the following command:
-   ```
-   python server.py
-   ```
-4. The server will start and display two URLs:
-   - Local URL (for accessing from your computer)
-   - WiFi/Network URL (for accessing from other devices on your WiFi network)
+### 4. Data Structure Creator
+Two methods available:
+1. Excel File Upload
+   - Process multiple Sample IDs from Excel
+   - Batch folder creation
+2. Manual Sample ID Entry
+   - Single folder structure creation
+   - Custom naming
 
-## Accessing the Control Panel
+Folder Structure Options:
+- Fabrication folders
+- Inspection folders
+- Standardized hierarchy:
+  ```
+  Run={Sample_ID}/
+  ├── Stage=source_data/
+  │   ├── Modality=record_manufacture/
+  │   ├── Modality=optical_image/
+  │   ├── Modality=sem_c_0deg/
+  │   ├── Modality=sem_c_high_angle/
+  │   ├── Modality=sem_c_medium_angle/
+  │   ├── Modality=sem_p_0deg/
+  │   ├── Modality=sem_p_high_angle/
+  │   └── Modality=sem_p_medium_angle/
+  ```
 
-- From your computer: Open a web browser and go to `http://localhost:8000`
-- From other devices on your WiFi network: 
-  1. Make sure the device is connected to the same WiFi network as the computer running the server
-  2. Open a web browser
-  3. Enter the WiFi/Network URL shown in the terminal (it will look like `http://192.168.x.x:8000`)
+### 5. Line Scaling Tool
+- Scale and visualize manufacturing lines between different working areas
+- Features include:
+  - Interactive dimension input
+  - Visual representation of original and scaled lines
+  - Detailed parameter tables
+  - Speed and timing preservation
+  - Real-time visualization updates
 
-## Available API Endpoints
+## Installation
 
-- GET `/api/machine-status`: Returns current status of all machines
-- POST `/api/control`: Send control commands to machines
+1. Ensure Python 3.7+ is installed on your system
+2. Install required packages:
+```bash
+pip install streamlit pandas matplotlib numpy
+```
 
-## Machine Control Commands
+## Usage
 
-The following commands are available for each machine:
-- Start: Begin machine operation
-- Stop: Halt machine operation
-- Maintenance: Put machine in maintenance mode
+1. Navigate to the application directory:
+```bash
+cd "Advanced Manufacturing Web App"
+```
 
-## Security Notes
+2. Run the Streamlit application:
+```bash
+streamlit run streamlit_app.py
+```
 
-- The control panel is only accessible to devices connected to the same WiFi network
-- Make sure your firewall allows incoming connections on port 8000
-- No data is sent to external servers
-- If you can't connect from other devices, check your computer's firewall settings
+3. Access the web interface at `http://localhost:8501` in your browser
 
-## Future Enhancements
+## Dependencies
+- Python 3.7+
+- Streamlit
+- Pandas
+- Matplotlib
+- NumPy
 
-- Real machine integration via industrial protocols
-- Historical data logging and analytics
-- User authentication and access control
-- Custom machine configuration options
-- Production scheduling interface 
+## Data Management
+The application handles various data types:
+- Excel files (.xlsx, .xls)
+- CSV files
+- Directory structures
+- Manufacturing line coordinates
+- Equipment status data
+
+## Contributing
+Feel free to submit issues and enhancement requests.
+
+## License
+This project is licensed under the MIT License - see the LICENSE file for details. 
