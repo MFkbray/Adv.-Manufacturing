@@ -9,6 +9,8 @@ from datetime import date
 import openpyxl
 from openpyxl import load_workbook
 import io
+import tempfile # For creating temporary batch file
+import atexit # For cleaning up temporary file
 
 # Function definitions moved to the top
 def scale_lines(lines, old_area, new_area):
@@ -381,6 +383,72 @@ if 'machine_status_data' not in st.session_state:
         ]
     }
 
+# Session state for Rclone Downloader Tab
+if 'rclone_remote_name' not in st.session_state:
+    st.session_state.rclone_remote_name = ""
+if 'rclone_source_path' not in st.session_state:
+    st.session_state.rclone_source_path = ""
+if 'rclone_local_destination' not in st.session_state:
+    st.session_state.rclone_local_destination = os.path.expanduser("~") # Default to home directory
+if 'rclone_command_output' not in st.session_state:
+    st.session_state.rclone_command_output = ""
+if 'rclone_last_run_command' not in st.session_state:
+    st.session_state.rclone_last_run_command = ""
+if 'rclone_is_running' not in st.session_state: # To control spinner
+    st.session_state.rclone_is_running = False
+if 'rclone_temp_batch_file_path' not in st.session_state: # To store path of temp .bat file
+    st.session_state.rclone_temp_batch_file_path = None
+
+# Session state for Rclone Local Destination Browser
+if 'rclone_show_local_dest_browser' not in st.session_state:
+    st.session_state.rclone_show_local_dest_browser = False
+if 'rclone_local_dest_browser_path' not in st.session_state:
+    st.session_state.rclone_local_dest_browser_path = st.session_state.rclone_local_destination # Initialize with current dest
+
+if 'rclone_exe_path' not in st.session_state: # For user to specify rclone.exe location
+    st.session_state.rclone_exe_path = "rclone" # Default to 'rclone', assuming it's in PATH
+
+# Remove old python subprocess state (if they exist from previous versions)
+if 'rclone_python_execute_request' in st.session_state:
+    del st.session_state['rclone_python_execute_request']
+if 'rclone_python_code_to_run' in st.session_state:
+    del st.session_state['rclone_python_code_to_run']
+
+# Function to clean up the temporary batch file
+def cleanup_rclone_batch_file():
+    if st.session_state.get('rclone_temp_batch_file_path') and os.path.exists(st.session_state.rclone_temp_batch_file_path):
+        try:
+            os.remove(st.session_state.rclone_temp_batch_file_path)
+            # st.write(f"Cleaned up {st.session_state.rclone_temp_batch_file_path}") # For debugging
+            st.session_state.rclone_temp_batch_file_path = None
+        except Exception as e:
+            # st.write(f"Error cleaning up batch file: {e}") # For debugging
+            pass # Fail silently on cleanup
+
+# Register cleanup function to be called on script exit
+atexit.register(cleanup_rclone_batch_file)
+
+# Check for rclone command result (now from run_terminal_cmd) and update UI state
+if 'tool_run_terminal_cmd_result' in st.session_state and st.session_state.tool_run_terminal_cmd_result is not None:
+    terminal_output = st.session_state.tool_run_terminal_cmd_result
+    
+    stdout = terminal_output.get('stdout', '')
+    stderr = terminal_output.get('stderr', '')
+    # exit_code = terminal_output.get('exit_code', 'N/A') # Assuming exit_code is part of the result
+
+    output_message = f"Rclone command execution via batch file finished.\n"
+    # output_message += f"Exit Code: {exit_code}\n" # If available
+    output_message += f"--- stdout ---\n{stdout}\n"
+    output_message += f"--- stderr ---\n{stderr}"
+    
+    st.session_state.rclone_command_output = output_message
+    st.session_state.rclone_is_running = False # Stop spinner
+    
+    cleanup_rclone_batch_file() # Clean up the temp file now that execution is done
+
+    del st.session_state.tool_run_terminal_cmd_result # Clear the result once processed
+    st.rerun()
+
 # Function to rename files
 def rename_files_in_folder(folder_path, old_string, new_string, prefix_string):
     if not os.path.exists(folder_path):
@@ -541,10 +609,11 @@ st.title("Advanced Manufacturing Control Panel")
 st.markdown("Monitor and control manufacturing equipment from anywhere")
 
 # Create tabs for different functionalities
-tab1, tab2, tab_fab_exporter, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab_fab_exporter, tab_rclone, tab3, tab4, tab5 = st.tabs([
     "Equipment Dashboard", 
     "File Management",
     "Fabricated Sample Exporter",
+    "SharePoint Download (Rclone)",
     "Excel Row Exporter", 
     "Data Structure Creator",
     "Line Scaling"
@@ -913,7 +982,7 @@ with tab_fab_exporter:
     # We need a way for the user to specify the sheet name if no file is uploaded OR if they want to override.
     # Let's make fab_selected_sheet_name editable also via a text input if no file is uploaded or if user wants to override.
 
-    # Allow specifying sheet name manually, especially if no file is uploaded or if user wants to override.
+    # Allow specifying sheet name manually, especially if no file is uploaded or to create a new sheet.
     current_sheet_name_for_input = st.session_state.fab_selected_sheet_name if st.session_state.fab_selected_sheet_name else "Sheet1"
     
     def on_manual_sheet_name_change():
@@ -1119,6 +1188,198 @@ with tab_fab_exporter:
             st.rerun() # Rerun to update UI
     else:
         st.info("No samples added to the batch yet.")
+
+# New Rclone Tab
+with tab_rclone:
+    st.subheader("SharePoint File Downloader (Rclone)")
+    st.markdown("""
+    **Important:** 
+    1.  `rclone` must be installed on the system running this Streamlit application.
+    2.  The `rclone` executable must be accessible via the system's PATH environment variable, OR you can provide the full path to `rclone.exe` below.
+    3.  A SharePoint remote must be configured in your `rclone.conf` file (e.g., named `MySharePoint:`).
+    """)
+
+    st.session_state.rclone_exe_path = st.text_input(
+        "Path to rclone.exe (optional, defaults to 'rclone' if in PATH):",
+        value=st.session_state.rclone_exe_path,
+        key="rclone_exe_path_input",
+        placeholder="e.g., C:\\path\\to\\rclone.exe or leave blank if rclone is in PATH"
+    )
+    # Ensure session state is updated from text input
+    # st.session_state.rclone_exe_path = st.session_state.rclone_exe_path_input # This line is removed
+    # Default to "rclone" if input is cleared by user, to ensure it's never truly empty for command construction
+    # This defaulting will now happen inside the button logic if needed.
+
+    st.session_state.rclone_remote_name = st.text_input(
+        "Rclone SharePoint Remote Name:", 
+        value=st.session_state.rclone_remote_name,
+        key="rclone_remote_name_input",
+        placeholder="e.g., MySharePoint"
+    )
+
+    st.session_state.rclone_source_path = st.text_input(
+        "SharePoint Source Path (File or Folder):", 
+        value=st.session_state.rclone_source_path,
+        key="rclone_source_path_input",
+        placeholder="e.g., Shared Documents/ProjectX/report.docx or Shared Documents/ProjectX/"
+    )
+
+    st.session_state.rclone_local_destination = st.text_input(
+        "Local Destination Directory:", 
+        value=st.session_state.rclone_local_destination,
+        key="rclone_local_dest_input",
+        placeholder="e.g., C:\\Users\\YourName\\Downloads\\ProjectX"
+    )
+    # Update session state immediately from text input if changed
+    st.session_state.rclone_remote_name = st.session_state.rclone_remote_name_input
+    st.session_state.rclone_source_path = st.session_state.rclone_source_path_input
+    st.session_state.rclone_local_destination = st.session_state.rclone_local_dest_input
+
+    # --- Local Destination Directory Browser ---
+    def rclone_update_dest_from_text_input():
+        st.session_state.rclone_local_destination = st.session_state.rclone_local_dest_input_val
+        # If browser is open and path changes, try to sync browser path if it's a valid dir
+        if st.session_state.rclone_show_local_dest_browser and os.path.isdir(st.session_state.rclone_local_dest_input_val):
+            st.session_state.rclone_local_dest_browser_path = st.session_state.rclone_local_dest_input_val
+    
+    # Use a different key for the text input that the browser controls
+    st.session_state.rclone_local_dest_input_val = st.text_input(
+        "Local Destination Directory:", 
+        value=st.session_state.rclone_local_destination, # This now refers to the main session state
+        key="rclone_local_dest_input_val_key",
+        on_change=rclone_update_dest_from_text_input,
+        placeholder="e.g., C:\\Users\\YourName\\Downloads\\ProjectX"
+    )
+    st.session_state.rclone_local_destination = st.session_state.rclone_local_dest_input_val # Ensure main state is updated
+
+    if st.button("Browse / Hide Local Destination Browser", key="rclone_toggle_local_dest_browser_btn"):
+        st.session_state.rclone_show_local_dest_browser = not st.session_state.rclone_show_local_dest_browser
+        if st.session_state.rclone_show_local_dest_browser:
+            # Initialize browser path to current destination if valid, else home
+            if os.path.isdir(st.session_state.rclone_local_destination):
+                st.session_state.rclone_local_dest_browser_path = st.session_state.rclone_local_destination
+            else:
+                st.session_state.rclone_local_dest_browser_path = os.path.expanduser("~")
+
+    if st.session_state.rclone_show_local_dest_browser:
+        with st.expander("Local Destination Browser", expanded=True):
+            st.write(f"Browsing: `{st.session_state.rclone_local_dest_browser_path}`")
+
+            if st.button("⬆️ Up One Level", key="rclone_browse_dest_up_btn"):
+                parent = str(Path(st.session_state.rclone_local_dest_browser_path).parent)
+                if os.path.isdir(parent) and parent != st.session_state.rclone_local_dest_browser_path:
+                    st.session_state.rclone_local_dest_browser_path = parent
+                    st.rerun()
+            
+            browser_dirs, _ = list_directory_contents(st.session_state.rclone_local_dest_browser_path)
+            if browser_dirs:
+                st.write("Subdirectories (click to navigate):")
+                for i, dir_item in enumerate(browser_dirs):
+                    dir_path_str = str(dir_item.resolve())
+                    clean_dir_name = "".join(c if c.isalnum() or c in ['_'] else '_' for c in dir_item.name)
+                    button_key = f"rclone_browse_dest_nav_to_dir_idx_{i}_{clean_dir_name}"
+                    if st.button(f"📁 {dir_item.name}", key=button_key):
+                        st.session_state.rclone_local_dest_browser_path = dir_path_str
+                        st.rerun()
+            else:
+                st.write("No subdirectories in current browsing path.")
+
+            select_current_label = f"Use '{os.path.basename(st.session_state.rclone_local_dest_browser_path)}' as Destination"
+            if st.button(select_current_label, key="rclone_browse_dest_select_current_btn"):
+                st.session_state.rclone_local_destination = st.session_state.rclone_local_dest_browser_path
+                st.session_state.rclone_local_dest_input_val = st.session_state.rclone_local_destination # Update text field
+                st.session_state.rclone_show_local_dest_browser = False 
+                st.rerun() 
+            
+            if st.button("Cancel Browsing", key="rclone_cancel_browsing_dest_btn"):
+                st.session_state.rclone_show_local_dest_browser = False
+                st.rerun()
+    # --- End Local Destination Directory Browser ---
+
+    if st.button("Download with Rclone", key="rclone_download_button"):
+        if not st.session_state.rclone_remote_name:
+            st.error("Please enter the Rclone SharePoint Remote Name.")
+        elif not st.session_state.rclone_source_path:
+            st.error("Please enter the SharePoint Source Path.")
+        elif not st.session_state.rclone_local_destination:
+            st.error("Please enter the Local Destination Directory.")
+        elif not os.path.isdir(st.session_state.rclone_local_destination):
+            st.error(f"Local Destination Directory is not valid or does not exist: {st.session_state.rclone_local_destination}")
+        else:
+            # Explicitly update rclone_exe_path from the input field before using it
+            current_exe_path_input = st.session_state.rclone_exe_path_input.strip()
+            if not current_exe_path_input:
+                effective_rclone_exe_path = "rclone" # Default if empty
+            else:
+                effective_rclone_exe_path = current_exe_path_input
+            st.session_state.rclone_exe_path = effective_rclone_exe_path # Store the used path
+
+            # Quote paths for command string if they contain spaces
+            quoted_rclone_exe = f'"{effective_rclone_exe_path}"' if ' ' in effective_rclone_exe_path and not effective_rclone_exe_path.startswith('"') else effective_rclone_exe_path
+            
+            # Remote path: remote_name:"path part"
+            # The path part of the remote needs to be quoted if it contains spaces.
+            # rclone itself handles the remote:path syntax.
+            # We are creating a string that rclone CLI will parse.
+            rclone_source_remote = st.session_state.rclone_remote_name.strip().rstrip(":")
+            rclone_source_path_part = st.session_state.rclone_source_path.strip()
+            # No, rclone needs quotes around the whole "remote:path" if the path part has spaces for cmd.exe
+            # Let's try quoting the path part for rclone's parsing first: remote:"path"
+            # then if that fails, quote the whole thing for cmd.exe
+            
+            # For the batch file, it's safer to quote the arguments that rclone receives.
+            # rclone.exe copy remote:"path with space" "local path with space"
+            
+            quoted_source_path_part = f'"{rclone_source_path_part}"' # Always quote for simplicity, rclone handles it.
+            full_remote_source_for_rclone = f'{rclone_source_remote}:{quoted_source_path_part}'
+            
+            local_dest_cleaned = st.session_state.rclone_local_destination.strip()
+            quoted_local_dest = f'"{local_dest_cleaned}"' if ' ' in local_dest_cleaned and not local_dest_cleaned.startswith('"') else local_dest_cleaned
+
+            # Construct the rclone command that will go INSIDE the batch file
+            rclone_command_for_batch_file = (
+                f'{quoted_rclone_exe} copy -v --create-empty-src-dirs '
+                f'{full_remote_source_for_rclone} {quoted_local_dest}'
+            )
+            
+            st.session_state.rclone_command_output = f"Preparing batch file...\n{rclone_command_for_batch_file}" # Show what will be in batch
+
+            try:
+                # Create a temporary batch file
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.bat', encoding='utf-8') as tmp_batch_file:
+                    tmp_batch_file.write(rclone_command_for_batch_file)
+                    st.session_state.rclone_temp_batch_file_path = tmp_batch_file.name
+                
+                # Command to execute the batch file
+                # Quote the batch file path in case the temp directory has spaces
+                command_to_run_batch = f'cmd /c "{st.session_state.rclone_temp_batch_file_path}"'
+                st.session_state.rclone_last_run_command = command_to_run_batch
+                
+                st.session_state.rclone_command_output = f"""Attempting to execute rclone command via temporary batch file: {st.session_state.rclone_temp_batch_file_path}
+Batch file content:
+{rclone_command_for_batch_file}
+Executing: {command_to_run_batch}"""
+                st.session_state.rclone_is_running = True
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Error creating temporary batch file: {str(e)}")
+                st.session_state.rclone_is_running = False
+
+
+    # Display spinner if rclone is supposed to be running 
+    if st.session_state.get('rclone_is_running', False):
+        with st.spinner("Rclone operation in progress via batch file..."):
+            # The actual run_terminal_cmd will be called by the agent after this rerun
+            # based on rclone_is_running and rclone_last_run_command being set.
+            pass 
+
+    st.markdown("---")
+    st.subheader("Rclone Output")
+    if st.session_state.rclone_last_run_command:
+        st.caption(f"Last command attempted: `{st.session_state.rclone_last_run_command}`")
+    st.text_area("Output:", value=st.session_state.rclone_command_output, height=200, disabled=True, key="rclone_output_area")
+
 
 # Tab 3: Excel Row Exporter
 with tab3:
